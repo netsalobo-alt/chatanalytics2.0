@@ -30,6 +30,13 @@ export function getRemoteFirestore() {
   return null;
 }
 
+function withTimeout<T>(promise: Promise<T>, ms: number, fallback: T): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<T>((resolve) => setTimeout(() => resolve(fallback), ms))
+  ]);
+}
+
 export async function loadAppDataFromFirestore(): Promise<{
   config?: Partial<ChatwootConfig>;
   investments?: InvestmentRecord[];
@@ -39,9 +46,14 @@ export async function loadAppDataFromFirestore(): Promise<{
   if (!db) return null;
 
   try {
-    const configSnap = await getDoc(doc(db, 'app_data', 'config'));
-    const investmentsSnap = await getDoc(doc(db, 'app_data', 'investments'));
-    const leadsSnap = await getDoc(doc(db, 'app_data', 'leads'));
+    const fetchPromises = Promise.all([
+      getDoc(doc(db, 'app_data', 'config')).catch(() => null),
+      getDoc(doc(db, 'app_data', 'investments')).catch(() => null),
+      getDoc(doc(db, 'app_data', 'leads')).catch(() => null)
+    ]);
+
+    const snaps = await withTimeout(fetchPromises, 4000, [null, null, null]);
+    const [configSnap, investmentsSnap, leadsSnap] = snaps;
 
     const result: {
       config?: Partial<ChatwootConfig>;
@@ -51,18 +63,18 @@ export async function loadAppDataFromFirestore(): Promise<{
 
     let hasAnyData = false;
 
-    if (configSnap.exists()) {
+    if (configSnap && configSnap.exists()) {
       result.config = configSnap.data() as Partial<ChatwootConfig>;
       hasAnyData = true;
     }
 
-    if (investmentsSnap.exists()) {
+    if (investmentsSnap && investmentsSnap.exists()) {
       const data = investmentsSnap.data();
       result.investments = Array.isArray(data?.items) ? data.items : [];
       hasAnyData = true;
     }
 
-    if (leadsSnap.exists()) {
+    if (leadsSnap && leadsSnap.exists()) {
       const data = leadsSnap.data();
       result.leads = data?.items && typeof data.items === 'object' ? data.items : {};
       hasAnyData = true;
@@ -102,11 +114,11 @@ export async function saveConfigToFirestore(config: ChatwootConfig): Promise<boo
 
   try {
     const cleanConfig = cleanUndefined(config);
-    await setDoc(doc(db, 'app_data', 'config'), {
+    const savePromise = setDoc(doc(db, 'app_data', 'config'), {
       ...cleanConfig,
       _persisted_at: new Date().toISOString()
-    });
-    return true;
+    }).then(() => true).catch(() => false);
+    return await withTimeout(savePromise, 4000, false);
   } catch (err: any) {
     console.warn('[FirestorePersistence] Erro ao persistir config:', err.message);
     return false;
@@ -119,11 +131,11 @@ export async function saveInvestmentsToFirestore(investments: InvestmentRecord[]
 
   try {
     const cleanInvestments = cleanUndefined(investments || []);
-    await setDoc(doc(db, 'app_data', 'investments'), {
+    const savePromise = setDoc(doc(db, 'app_data', 'investments'), {
       items: cleanInvestments,
       _persisted_at: new Date().toISOString()
-    });
-    return true;
+    }).then(() => true).catch(() => false);
+    return await withTimeout(savePromise, 4000, false);
   } catch (err: any) {
     console.warn('[FirestorePersistence] Erro ao persistir investimentos:', err.message);
     return false;
@@ -136,12 +148,12 @@ export async function saveLeadsToFirestore(leads: Record<string, LeadRecord>): P
 
   try {
     const cleanLeads = cleanUndefined(leads || {});
-    await setDoc(doc(db, 'app_data', 'leads'), {
+    const savePromise = setDoc(doc(db, 'app_data', 'leads'), {
       items: cleanLeads,
       _count: Object.keys(cleanLeads).length,
       _persisted_at: new Date().toISOString()
-    });
-    return true;
+    }).then(() => true).catch(() => false);
+    return await withTimeout(savePromise, 4000, false);
   } catch (err: any) {
     console.warn('[FirestorePersistence] Erro ao persistir leads:', err.message);
     return false;

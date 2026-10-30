@@ -16,12 +16,13 @@ import {
   ChevronRight,
   PanelLeftClose,
   PanelLeftOpen,
-  Sparkles
+  Sparkles,
+  Info
 } from 'lucide-react';
 import { ChatwootConfig, AppUser } from '../types.ts';
 import { Tooltip } from './Tooltip.tsx';
 
-export type NavTab = 'dashboard' | 'leads' | 'conversions' | 'investments' | 'channels' | 'reports' | 'users' | 'settings';
+export type NavTab = 'dashboard' | 'leads' | 'conversions' | 'investments' | 'channels' | 'reports' | 'users' | 'settings' | 'about';
 
 interface SidebarProps {
   currentTab: NavTab;
@@ -104,6 +105,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
       id: 'settings', 
       label: 'Configurações', 
       icon: <Settings className="w-5 h-5 shrink-0" /> 
+    },
+    { 
+      id: 'about', 
+      label: 'Sobre o Sistema', 
+      icon: <Info className="w-5 h-5 shrink-0" /> 
     }
   ];
 

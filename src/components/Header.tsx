@@ -86,6 +86,11 @@ const TAB_TITLES: Record<NavTab, { title: string; subtitle: string; tag: string 
     title: 'Configurações da Integração',
     subtitle: 'Conexão segura com a API do Chatwoot, credenciais, webhooks e parâmetros',
     tag: 'API Oficial Chatwoot'
+  },
+  about: {
+    title: 'Sobre o ChatAnalytics 2.0',
+    subtitle: 'Funcionalidades, arquitetura, propósito do sistema e autoria',
+    tag: 'Versão 2.0 • Netsa Lobo'
   }
 };
 

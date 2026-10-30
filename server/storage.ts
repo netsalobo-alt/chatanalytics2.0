@@ -916,11 +916,8 @@ export async function initPersistentStorage(): Promise<void> {
       if (remote.investments && Array.isArray(remote.investments) && remote.investments.length > 0) {
         db.investments = remote.investments;
       }
-      // If local leads were explicitly wiped, sync the wiped state to Firestore
-      if (Object.keys(db.leads).length === 0) {
-        await saveLeadsToFirestore({});
-      } else if (remote.leads && typeof remote.leads === 'object' && Object.keys(remote.leads).length > 0) {
-        db.leads = { ...db.leads, ...remote.leads };
+      if (remote.leads && typeof remote.leads === 'object' && Object.keys(remote.leads).length > 0) {
+        db.leads = { ...remote.leads, ...db.leads };
       }
       saveDb(db, false);
       console.log(`[Storage] Armazenamento persistente inicializado: ${Object.keys(db.leads).length} leads, ${(db.investments || []).length} aportes.`);

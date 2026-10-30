@@ -72,6 +72,11 @@ app.use((req, res, next) => {
   next();
 });
 
+// Health check endpoints for Cloud Run TCP/HTTP probes and container monitors
+app.get(['/healthz', '/api/health'], (_req: Request, res: Response) => {
+  res.status(200).json({ status: 'ok', service: 'chatwoot-analytics', timestamp: new Date().toISOString() });
+});
+
 // ==========================================
 // API ROUTES
 // ==========================================
@@ -1512,18 +1517,21 @@ app.get('/api/export/printable-report', (req: Request, res: Response) => {
 // VITE DEV SERVER OR STATIC PRODUCTION
 // ==========================================
 async function startServer() {
-  try {
-    await initPersistentStorage();
-  } catch (e: any) {
-    console.warn('[ServerBoot] Falha ao carregar armazenamento persistente:', e.message);
-  }
-
   const distPath = path.resolve(__dirname, 'dist');
   const hasDistIndex = fs.existsSync(path.resolve(distPath, 'index.html'));
-  // In dev mode (NODE_ENV !== 'production'), mount Vite middleware for live development
-  const isProduction = process.env.NODE_ENV === 'production' && hasDistIndex;
+  const isProduction = process.env.NODE_ENV === 'production' || hasDistIndex;
 
-  if (!isProduction) {
+  if (isProduction && hasDistIndex) {
+    app.use(express.static(distPath));
+    app.get('*', (_req: Request, res: Response) => {
+      const indexPath = path.resolve(distPath, 'index.html');
+      if (fs.existsSync(indexPath)) {
+        res.sendFile(indexPath);
+      } else {
+        res.status(200).send('ChatAnalytics server is running.');
+      }
+    });
+  } else {
     try {
       const { createServer: createViteServer } = await import('vite');
       const vite = await createViteServer({
@@ -1534,22 +1542,20 @@ async function startServer() {
     } catch (err) {
       console.warn('Vite dev middleware could not be loaded, running in API mode:', err);
     }
-  } else {
-    if (fs.existsSync(distPath)) {
-      app.use(express.static(distPath));
-    }
-    app.get('*', (_req: Request, res: Response) => {
-      const indexPath = path.resolve(distPath, 'index.html');
-      if (fs.existsSync(indexPath)) {
-        res.sendFile(indexPath);
-      } else {
-        res.status(200).send('ChatAnalytics server is running.');
-      }
-    });
   }
 
   const server = app.listen(PORT, '0.0.0.0', () => {
     console.log(`ChatAnalytics server running on http://0.0.0.0:${PORT}`);
+    
+    // Background initialization so server port opens immediately for TCP startup probes
+    initPersistentStorage()
+      .then(() => {
+        console.log('[ServerBoot] Armazenamento inicializado com sucesso.');
+      })
+      .catch((e: any) => {
+        console.warn('[ServerBoot] Falha ao carregar armazenamento persistente:', e.message);
+      });
+
     try {
       initAutoSyncScheduler();
     } catch (e) {

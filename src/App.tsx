@@ -9,6 +9,7 @@ import { ChannelsView } from './components/ChannelsView.tsx';
 import { ReportsView } from './components/ReportsView.tsx';
 import { UsersView } from './components/UsersView.tsx';
 import { SettingsView } from './components/SettingsView.tsx';
+import { AboutView } from './components/AboutView.tsx';
 import { LoginView } from './components/LoginView.tsx';
 import { LeadDetailModal } from './components/LeadDetailModal.tsx';
 import { NewLeadModal } from './components/NewLeadModal.tsx';
@@ -882,6 +883,10 @@ export default function App() {
               onUpdateAdSpend={handleUpdateAdSpend}
               onBackupRestored={handleBackupRestored}
             />
+          )}
+
+          {currentTab === 'about' && (
+            <AboutView onNavigate={tab => setCurrentTab(tab)} />
           )}
         </main>
       </div>
