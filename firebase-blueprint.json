@@ -1,0 +1,157 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "User profile with role-based access for ChatAnalytics",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "description": "Auth UID of the user"
+        },
+        "name": {
+          "type": "string",
+          "description": "Full name of the user"
+        },
+        "email": {
+          "type": "string",
+          "format": "email",
+          "description": "Email address"
+        },
+        "role": {
+          "type": "string",
+          "enum": ["admin", "manager", "operator"],
+          "description": "User access role"
+        },
+        "status": {
+          "type": "string",
+          "enum": ["active", "inactive"],
+          "description": "User account status"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Creation timestamp"
+        }
+      },
+      "required": ["uid", "name", "email", "role"]
+    },
+    "Lead": {
+      "title": "Lead",
+      "description": "Lead entity for ChatAnalytics 2.0 with SDR qualification and Chatwoot integration",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Composite key accountId_contactId"
+        },
+        "account_id": {
+          "type": "string",
+          "description": "Chatwoot account ID"
+        },
+        "contact_id": {
+          "type": "number",
+          "description": "Chatwoot contact ID"
+        },
+        "conversation_id": {
+          "type": "number",
+          "description": "Latest conversation ID"
+        },
+        "contact_name": {
+          "type": "string",
+          "description": "Full name of the lead"
+        },
+        "contact_phone": {
+          "type": "string",
+          "description": "Phone number with country code"
+        },
+        "entry_date": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Timestamp of lead entry"
+        },
+        "last_interaction_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Timestamp of latest interaction"
+        },
+        "cpf": {
+          "type": "string",
+          "description": "Brazilian CPF number"
+        },
+        "cpf_valid": {
+          "type": "boolean",
+          "description": "Validation result of CPF check digits"
+        },
+        "birth_date": {
+          "type": "string",
+          "description": "Birth date (YYYY-MM-DD)"
+        },
+        "cnh": {
+          "type": "string",
+          "description": "CNH driver license number"
+        },
+        "status": {
+          "type": "string",
+          "enum": ["NOVO LEAD", "EM ANÁLISE", "PENDENTE", "APROVADO", "REPROVADO"],
+          "description": "Lead qualification status"
+        },
+        "vendedor": {
+          "type": "string",
+          "description": "Assigned SDR or salesperson"
+        },
+        "loja": {
+          "type": "string",
+          "description": "Store or business branch"
+        },
+        "vendeu": {
+          "type": "boolean",
+          "description": "Indicates whether sale closed"
+        },
+        "valor_venda": {
+          "type": "number",
+          "description": "Monetary value of closed sale in BRL"
+        },
+        "observacao": {
+          "type": "string",
+          "description": "SDR notes regarding the lead"
+        },
+        "motivo_reprovacao": {
+          "type": "string",
+          "description": "Reason for lead rejection"
+        },
+        "chatwoot_url": {
+          "type": "string",
+          "description": "Direct conversation link in Chatwoot"
+        }
+      },
+      "required": ["id", "account_id", "contact_id", "contact_name", "status"]
+    },
+    "AppData": {
+      "title": "AppData",
+      "description": "Persistent application state including integration settings, leads, and investments",
+      "type": "object",
+      "properties": {
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Timestamp of last modification"
+        }
+      }
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "Registered system users and their roles"
+    },
+    "/app_data/{docId}": {
+      "schema": "AppData",
+      "description": "Persistent application configuration, leads, and investments"
+    },
+    "/system/{docId}": {
+      "schema": "AppData",
+      "description": "System configuration and setup status"
+    }
+  }
+}
