@@ -120,7 +120,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       {/* Main Sidebar Shell */}
       <aside 
         className={`fixed left-0 top-0 h-full z-50 lg:z-40 flex flex-col justify-between p-3.5 bg-gradient-to-b from-[#001726] via-[#001f35] to-[#001424] border-r border-[#00375a]/70 select-none text-slate-100 shadow-2xl transition-all duration-300 ease-in-out ${
-          isCollapsed ? 'w-[72px]' : 'w-64'
+          isCollapsed ? 'w-[72px]' : 'w-68'
         } ${
           isOpenMobile ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'
         }`}
@@ -134,17 +134,12 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-[#00375a] to-[#1A94C5] flex items-center justify-center font-bold text-white shadow-lg border border-cyan-400/30 shrink-0">
                   <TrendingUp className="w-5 h-5 text-[#c1ef6d]" />
                 </div>
-                <div className="flex flex-col min-w-0">
-                  <div className="flex items-center gap-1.5">
-                    <span className="text-lg font-bold tracking-tight text-white font-['Plus_Jakarta_Sans',sans-serif] truncate">
-                      ChatAnalytics
-                    </span>
-                    <span className="text-[10px] font-extrabold px-1.5 py-0.2 rounded-md bg-[#c1ef6d]/20 text-[#c1ef6d] border border-[#c1ef6d]/30">
-                      2.0
-                    </span>
-                  </div>
-                  <span className="text-[10px] tracking-wider uppercase font-semibold text-slate-400">
-                    Enterprise BI
+                <div className="flex items-center gap-1.5 min-w-0">
+                  <span className="text-lg font-bold tracking-tight text-white font-['Plus_Jakarta_Sans',sans-serif] whitespace-nowrap">
+                    ChatAnalytics
+                  </span>
+                  <span className="text-[10px] font-extrabold px-1.5 py-0.5 rounded-md bg-[#c1ef6d]/20 text-[#c1ef6d] border border-[#c1ef6d]/30 whitespace-nowrap">
+                    2.0
                   </span>
                 </div>
               </div>

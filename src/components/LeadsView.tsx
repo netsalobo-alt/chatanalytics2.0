@@ -54,6 +54,10 @@ interface LeadsViewProps {
   onVendedorChange: (vendedor: string) => void;
   selectedVendeu: string;
   onVendeuChange: (vendeu: string) => void;
+  onlyWithCpf?: boolean;
+  onToggleOnlyWithCpf?: () => void;
+  searchCpfOnly?: boolean;
+  onToggleSearchCpfOnly?: () => void;
   onOpenDetails: (lead: LeadRecord) => void;
   onOpenNewLeadModal: () => void;
   onQuickApprove: (lead: LeadRecord) => void;
@@ -85,6 +89,10 @@ export const LeadsView: React.FC<LeadsViewProps> = ({
   onVendedorChange,
   selectedVendeu,
   onVendeuChange,
+  onlyWithCpf = false,
+  onToggleOnlyWithCpf,
+  searchCpfOnly = false,
+  onToggleSearchCpfOnly,
   onOpenDetails,
   onOpenNewLeadModal,
   onQuickApprove,
@@ -98,6 +106,10 @@ export const LeadsView: React.FC<LeadsViewProps> = ({
   // Delete dialog state
   const [leadToDelete, setLeadToDelete] = useState<LeadRecord | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
+
+  // Clear leads database dialog state
+  const [isClearDbModalOpen, setIsClearDbModalOpen] = useState(false);
+  const [isClearingDb, setIsClearingDb] = useState(false);
 
   // Reject reason dialog state
   const [rejectDialogLead, setRejectDialogLead] = useState<LeadRecord | null>(null);
@@ -117,6 +129,7 @@ export const LeadsView: React.FC<LeadsViewProps> = ({
   // Metadata for filter dropdowns
   const [availableLojas, setAvailableLojas] = useState<string[]>([]);
   const [availableVendedores, setAvailableVendedores] = useState<string[]>([]);
+  const [availableCpfCount, setAvailableCpfCount] = useState<number>(0);
 
   useEffect(() => {
     fetch('/api/leads/meta')
@@ -124,9 +137,28 @@ export const LeadsView: React.FC<LeadsViewProps> = ({
       .then(data => {
         if (data.lojas) setAvailableLojas(data.lojas);
         if (data.vendedores) setAvailableVendedores(data.vendedores);
+        if (typeof data.leads_with_cpf === 'number') setAvailableCpfCount(data.leads_with_cpf);
       })
       .catch(e => console.warn('Could not load leads metadata:', e));
   }, [leads.length]);
+
+  const handleClearAllLeads = async () => {
+    setIsClearingDb(true);
+    try {
+      const res = await fetch('/api/leads/clear', { method: 'POST' });
+      const json = await res.json();
+      if (res.ok) {
+        setIsClearDbModalOpen(false);
+        if (onRefresh) onRefresh();
+      } else {
+        alert(json.error || 'Erro ao limpar banco de leads.');
+      }
+    } catch (e: any) {
+      alert(`Falha ao limpar: ${e.message}`);
+    } finally {
+      setIsClearingDb(false);
+    }
+  };
 
   const statusOptions: { id: string; label: string; count?: number; color: string }[] = [
     { id: 'all', label: 'Todos os Leads', count: totalLeads, color: 'bg-slate-100 text-slate-800' },
@@ -279,11 +311,24 @@ export const LeadsView: React.FC<LeadsViewProps> = ({
             <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
             <input
               type="text"
-              placeholder="Buscar por nome, telefone, CPF, vendedor ou loja..."
+              placeholder={searchCpfOnly ? "Pesquisar somente CPF (digite os números)..." : "Buscar por nome, telefone, CPF, vendedor ou loja..."}
               value={searchQuery}
               onChange={e => onSearchChange(e.target.value)}
-              className="w-full pl-10 pr-3.5 py-2 text-xs rounded-xl border border-slate-200 bg-slate-50 focus:bg-white focus:ring-2 focus:ring-[#1A94C5]/20 focus:border-[#1A94C5] focus:outline-hidden"
+              className={`w-full pl-10 pr-3.5 py-2 text-xs rounded-xl border ${
+                searchCpfOnly 
+                  ? 'border-purple-400 bg-purple-50/40 text-purple-950 font-semibold focus:ring-2 focus:ring-purple-400/20 focus:border-purple-500' 
+                  : 'border-slate-200 bg-slate-50 focus:bg-white focus:ring-2 focus:ring-[#1A94C5]/20 focus:border-[#1A94C5]'
+              } focus:outline-hidden`}
             />
+            {searchQuery && (
+              <button
+                type="button"
+                onClick={() => onSearchChange('')}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 p-0.5 rounded cursor-pointer"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            )}
           </div>
 
           {/* Vendeu Filter */}
@@ -346,10 +391,78 @@ export const LeadsView: React.FC<LeadsViewProps> = ({
           </div>
         </div>
 
-        {/* Active Filters / Reset */}
-        {(selectedStatus !== 'all' || searchQuery || selectedLoja !== 'all' || selectedVendedor !== 'all' || selectedVendeu !== 'all' || selectedChannel !== 'Todos') && (
+        {/* CPF Search & Filter Sub-Bar */}
+        <div className="pt-2.5 border-t border-slate-100 flex flex-wrap items-center justify-between gap-2.5">
+          <div className="flex items-center gap-2 flex-wrap">
+            {/* Toggle: Somente Leads com CPF Capturado */}
+            <button
+              type="button"
+              onClick={onToggleOnlyWithCpf}
+              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-2 border ${
+                onlyWithCpf
+                  ? 'bg-[#002139] text-[#c1ef6d] border-[#002139] shadow-xs'
+                  : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100 hover:border-slate-300'
+              }`}
+            >
+              <CreditCard className={`w-3.5 h-3.5 ${onlyWithCpf ? 'text-[#c1ef6d]' : 'text-[#1A94C5]'}`} />
+              <span>Somente Leads com CPF Capturado</span>
+              {availableCpfCount !== undefined && (
+                <span className={`px-1.5 py-0.5 rounded-md text-[10px] font-extrabold ${
+                  onlyWithCpf ? 'bg-white/20 text-[#c1ef6d]' : 'bg-slate-200 text-slate-700'
+                }`}>
+                  {availableCpfCount}
+                </span>
+              )}
+            </button>
+
+            {/* Toggle: Pesquisa Somente por CPF */}
+            <button
+              type="button"
+              onClick={onToggleSearchCpfOnly}
+              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 border ${
+                searchCpfOnly
+                  ? 'bg-purple-900 text-purple-200 border-purple-800 shadow-xs'
+                  : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100 hover:border-slate-300'
+              }`}
+            >
+              <Search className={`w-3.5 h-3.5 ${searchCpfOnly ? 'text-purple-300' : 'text-slate-400'}`} />
+              <span>{searchCpfOnly ? '✓ Modo: Pesquisando Somente CPF' : 'Pesquisar Somente por CPF'}</span>
+            </button>
+
+            {/* Quick reset for CPF filters */}
+            {(onlyWithCpf || searchCpfOnly) && (
+              <button
+                type="button"
+                onClick={() => {
+                  if (onlyWithCpf && onToggleOnlyWithCpf) onToggleOnlyWithCpf();
+                  if (searchCpfOnly && onToggleSearchCpfOnly) onToggleSearchCpfOnly();
+                  onSearchChange('');
+                }}
+                className="text-[11px] font-bold text-rose-600 hover:text-rose-800 underline cursor-pointer ml-1"
+              >
+                Limpar filtro de CPF
+              </button>
+            )}
+          </div>
+
+          {/* Admin Clean/Clear Leads Database Button */}
+          {currentUser?.role === 'admin' && (
+            <button
+              type="button"
+              onClick={() => setIsClearDbModalOpen(true)}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-rose-200 bg-rose-50 hover:bg-rose-100 text-rose-700 text-xs font-bold transition-colors cursor-pointer ml-auto"
+              title="Apagar permanentemente todos os leads gravados no banco de dados"
+            >
+              <Trash2 className="w-3.5 h-3.5 text-rose-600" />
+              <span>Limpar Banco de Leads</span>
+            </button>
+          )}
+        </div>
+
+        {/* Active General Filters / Reset */}
+        {(selectedStatus !== 'all' || (!searchCpfOnly && searchQuery) || selectedLoja !== 'all' || selectedVendedor !== 'all' || selectedVendeu !== 'all' || (selectedChannel && selectedChannel !== 'Todos')) && (
           <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-xs text-slate-500">
-            <span>Filtros ativos aplicados na listagem de leads.</span>
+            <span>Filtros comerciais aplicados na visualização.</span>
             <button
               onClick={() => {
                 onStatusChange('all');
@@ -362,7 +475,7 @@ export const LeadsView: React.FC<LeadsViewProps> = ({
               className="font-bold text-[#1A94C5] hover:underline flex items-center gap-1 cursor-pointer"
             >
               <RotateCcw className="w-3.5 h-3.5" />
-              <span>Limpar todos os filtros</span>
+              <span>Redefinir filtros comerciais</span>
             </button>
           </div>
         )}
@@ -792,6 +905,54 @@ export const LeadsView: React.FC<LeadsViewProps> = ({
               >
                 {isDeleting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
                 <span>{isDeleting ? 'Excluindo...' : 'Sim, Excluir Lead'}</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Clear Database Modal */}
+      {isClearDbModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-xs p-4 animate-in fade-in duration-150">
+          <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl border border-rose-100 space-y-4">
+            <div className="flex items-center gap-3">
+              <div className="w-11 h-11 rounded-2xl bg-rose-100 text-rose-600 flex items-center justify-center shrink-0 shadow-xs">
+                <Trash2 className="w-6 h-6 text-rose-600" />
+              </div>
+              <div>
+                <h3 className="text-base font-bold text-slate-900">Limpar Banco de Leads</h3>
+                <p className="text-xs text-rose-600 font-semibold">Ação destrutiva e permanente</p>
+              </div>
+            </div>
+
+            <p className="text-xs text-slate-600 leading-relaxed">
+              Você está prestes a <strong>apagar todos os leads gravados no banco de dados</strong> (.bd local e persistência remota). Esta operação é ideal para reiniciar a captação após testes ou antes de ir para produção.
+            </p>
+
+            <div className="p-3 bg-amber-50 rounded-xl border border-amber-200 text-[11px] text-amber-900 flex items-start gap-2">
+              <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+              <span>
+                As configurações de canais e tokens não serão afetadas, apenas os registros de leads.
+              </span>
+            </div>
+
+            <div className="flex items-center justify-end gap-2.5 pt-2 border-t border-slate-100">
+              <button
+                type="button"
+                disabled={isClearingDb}
+                onClick={() => setIsClearDbModalOpen(false)}
+                className="px-4 py-2 rounded-xl text-xs font-semibold text-slate-600 hover:bg-slate-100 transition-colors cursor-pointer"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                disabled={isClearingDb}
+                onClick={handleClearAllLeads}
+                className="flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold bg-rose-600 hover:bg-rose-700 text-white shadow-sm transition-colors cursor-pointer disabled:opacity-50"
+              >
+                {isClearingDb ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
+                <span>{isClearingDb ? 'Limpando banco...' : 'Confirmar Limpeza Total'}</span>
               </button>
             </div>
           </div>

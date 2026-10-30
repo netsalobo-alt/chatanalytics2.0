@@ -660,16 +660,19 @@ app.get('/api/leads/meta', (_req: Request, res: Response) => {
   const allLeads = getAllLeads();
   const lojasSet = new Set<string>();
   const vendedoresSet = new Set<string>();
+  let withCpfCount = 0;
 
   allLeads.forEach(l => {
     if (l.loja && l.loja.trim()) lojasSet.add(l.loja.trim());
     if (l.vendedor && l.vendedor.trim()) vendedoresSet.add(l.vendedor.trim());
+    if (l.cpf && l.cpf.trim()) withCpfCount++;
   });
 
   res.json({
     lojas: Array.from(lojasSet).sort(),
     vendedores: Array.from(vendedoresSet).sort(),
-    total_leads: allLeads.length
+    total_leads: allLeads.length,
+    leads_with_cpf: withCpfCount
   });
 });
 
@@ -688,6 +691,9 @@ app.get('/api/leads', (req: Request, res: Response) => {
     const vendedor = req.query.vendedor as string;
     const search = req.query.search as string;
     const sort = (req.query.sort as string) || 'date_desc';
+    const onlyWithCpf = req.query.has_cpf === 'true' || req.query.onlyWithCpf === 'true' || req.query.only_cpf === 'true';
+    const searchCpfOnly = req.query.searchCpfOnly === 'true' || req.query.cpf_only === 'true';
+    const cpfParam = (req.query.cpf as string || '').trim();
 
     const page = Math.max(1, Number(req.query.page) || 1);
     const limit = Math.max(1, Math.min(100, Number(req.query.limit) || 10));
@@ -745,22 +751,53 @@ app.get('/api/leads', (req: Request, res: Response) => {
         if (l.vendedor !== vendedor) return false;
       }
 
+      // Filter: only leads with captured CPF
+      if (onlyWithCpf) {
+        if (!l.cpf || !l.cpf.trim()) return false;
+      }
+
+      // Explicit CPF parameter match
+      if (cpfParam) {
+        const cleanCpfParam = cpfParam.replace(/\D/g, '');
+        const leadDigits = (l.cpf || '').replace(/\D/g, '');
+        if (cleanCpfParam.length > 0) {
+          if (!leadDigits.includes(cleanCpfParam)) return false;
+        } else if (!l.cpf?.toLowerCase().includes(cpfParam.toLowerCase())) {
+          return false;
+        }
+      }
+
+      // Search query handling
       if (search && search.trim().length > 0) {
         const q = search.toLowerCase().trim();
-        const matchName = l.contact_name?.toLowerCase().includes(q);
-        const matchEmail = l.contact_email?.toLowerCase().includes(q);
-        const matchPhone = l.contact_phone?.toLowerCase().includes(q);
-        const matchCpf = l.cpf?.includes(q);
-        const matchVendedor = l.vendedor?.toLowerCase().includes(q);
-        const matchLoja = l.loja?.toLowerCase().includes(q);
-        const matchObs = l.observacao?.toLowerCase().includes(q);
-        const matchReason = l.motivo_reprovacao?.toLowerCase().includes(q);
-        const matchId = `cw-${l.conversation_id}`.toLowerCase().includes(q) || 
-                        String(l.conversation_id).includes(q) || 
-                        String(l.contact_id).includes(q);
-        
-        if (!matchName && !matchEmail && !matchPhone && !matchCpf && !matchVendedor && !matchLoja && !matchObs && !matchReason && !matchId) {
-          return false;
+        const searchDigits = q.replace(/\D/g, '');
+
+        if (searchCpfOnly) {
+          // Dedicated CPF-only search mode: require CPF and match digits or formatted string
+          if (!l.cpf || !l.cpf.trim()) return false;
+          const leadDigits = l.cpf.replace(/\D/g, '');
+          const matchDigits = searchDigits.length > 0 && leadDigits.includes(searchDigits);
+          const matchFormatted = l.cpf.toLowerCase().includes(q);
+          if (!matchDigits && !matchFormatted) return false;
+        } else {
+          // General search
+          const leadCpfDigits = (l.cpf || '').replace(/\D/g, '');
+          const matchCpfDigits = searchDigits.length >= 3 && leadCpfDigits.includes(searchDigits);
+          const matchName = l.contact_name?.toLowerCase().includes(q);
+          const matchEmail = l.contact_email?.toLowerCase().includes(q);
+          const matchPhone = l.contact_phone?.toLowerCase().includes(q);
+          const matchCpf = (l.cpf && l.cpf.toLowerCase().includes(q)) || matchCpfDigits;
+          const matchVendedor = l.vendedor?.toLowerCase().includes(q);
+          const matchLoja = l.loja?.toLowerCase().includes(q);
+          const matchObs = l.observacao?.toLowerCase().includes(q);
+          const matchReason = l.motivo_reprovacao?.toLowerCase().includes(q);
+          const matchId = `cw-${l.conversation_id}`.toLowerCase().includes(q) || 
+                          String(l.conversation_id).includes(q) || 
+                          String(l.contact_id).includes(q);
+          
+          if (!matchName && !matchEmail && !matchPhone && !matchCpf && !matchVendedor && !matchLoja && !matchObs && !matchReason && !matchId) {
+            return false;
+          }
         }
       }
 
@@ -802,6 +839,8 @@ app.get('/api/leads', (req: Request, res: Response) => {
     const aprovadosCount = filtered.filter(l => l.status === 'APROVADO').length;
     const reprovadosCount = filtered.filter(l => l.status === 'REPROVADO').length;
     const soldCount = filtered.filter(l => Boolean(l.vendeu)).length;
+    const withCpfCount = filtered.filter(l => Boolean(l.cpf && l.cpf.trim())).length;
+    const totalAllWithCpf = allLeads.filter(l => Boolean(l.cpf && l.cpf.trim())).length;
 
     res.json({
       data: items,
@@ -821,6 +860,8 @@ app.get('/api/leads', (req: Request, res: Response) => {
         aprovados: aprovadosCount,
         reprovados: reprovadosCount,
         vendas: soldCount,
+        leads_with_cpf: withCpfCount,
+        total_all_with_cpf: totalAllWithCpf,
         taxa_aprovacao: (aprovadosCount + reprovadosCount) > 0 ? Number(((aprovadosCount / (aprovadosCount + reprovadosCount)) * 100).toFixed(1)) : 0,
         taxa_conversao: total > 0 ? Number(((soldCount / total) * 100).toFixed(1)) : 0
       }
@@ -1157,7 +1198,12 @@ app.post('/api/seed-demo', (_req: Request, res: Response) => {
 
 app.post('/api/clear', (_req: Request, res: Response) => {
   clearDatabase();
-  res.json({ success: true, message: 'Base de dados limpa.' });
+  res.json({ success: true, message: 'Base de dados limpa com sucesso.' });
+});
+
+app.post('/api/leads/clear', (_req: Request, res: Response) => {
+  clearDatabase();
+  res.json({ success: true, message: 'Todos os leads foram removidos da base de dados com sucesso.' });
 });
 
 // 8. CSV Export

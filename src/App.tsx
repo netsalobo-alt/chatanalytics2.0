@@ -21,7 +21,7 @@ import {
 } from './types.ts';
 import { auth, db } from './lib/firebase.ts';
 import { onAuthStateChanged, signOut } from 'firebase/auth';
-import { doc, getDoc, setDoc } from 'firebase/firestore';
+import { doc, getDoc, setDoc, collection, getDocs, query, limit } from 'firebase/firestore';
 import { CheckCircle2, AlertTriangle, Info, X } from 'lucide-react';
 
 export default function App() {
@@ -46,6 +46,8 @@ export default function App() {
   const [selectedVendedor, setSelectedVendedor] = useState('all');
   const [selectedSort, setSelectedSort] = useState('date_desc');
   const [searchQuery, setSearchQuery] = useState('');
+  const [onlyWithCpf, setOnlyWithCpf] = useState(false);
+  const [searchCpfOnly, setSearchCpfOnly] = useState(false);
 
   // UI state
   const [isSyncing, setIsSyncing] = useState(false);
@@ -81,35 +83,78 @@ export default function App() {
         try {
           const userDoc = await getDoc(doc(db, 'users', firebaseUser.uid));
           if (userDoc.exists()) {
-            setCurrentUser(userDoc.data() as AppUser);
-          } else {
-            const fallback: AppUser = {
-              uid: firebaseUser.uid,
-              name: firebaseUser.displayName || firebaseUser.email?.split('@')[0] || 'Administrador',
-              email: (firebaseUser.email || '').toLowerCase(),
-              role: 'admin',
-              status: 'active',
-              isMaster: true,
-              createdAt: new Date().toISOString()
-            };
-            try {
-              await setDoc(doc(db, 'users', firebaseUser.uid), fallback);
-            } catch (e) {
-              console.warn('Could not auto-persist user doc:', e);
+            const data = userDoc.data() as AppUser;
+            if (data.status === 'inactive') {
+              await signOut(auth);
+              setCurrentUser(null);
+              showToast('error', 'Sua conta de usuário está desativada no sistema.');
+              setAuthLoading(false);
+              return;
             }
-            setCurrentUser(fallback);
+            setCurrentUser(data);
+          } else {
+            // Check if user was registered by Master using email
+            const userEmail = (firebaseUser.email || '').toLowerCase();
+            const qUsers = query(collection(db, 'users'), limit(50));
+            const usersSnap = await getDocs(qUsers);
+            const matchedUser = usersSnap.docs
+              .map(d => d.data() as AppUser)
+              .find(u => u.email && u.email.toLowerCase() === userEmail);
+
+            if (matchedUser) {
+              const updatedUser: AppUser = {
+                ...matchedUser,
+                uid: firebaseUser.uid,
+                status: matchedUser.status || 'active'
+              };
+              if (updatedUser.status === 'inactive') {
+                await signOut(auth);
+                setCurrentUser(null);
+                showToast('error', 'Sua conta de usuário está desativada.');
+                setAuthLoading(false);
+                return;
+              }
+              await setDoc(doc(db, 'users', firebaseUser.uid), updatedUser);
+              setCurrentUser(updatedUser);
+            } else {
+              // Check if ANY users exist in the system (first user becomes Master)
+              const isFirstUser = usersSnap.empty;
+              if (isFirstUser) {
+                const masterUser: AppUser = {
+                  uid: firebaseUser.uid,
+                  name: firebaseUser.displayName || userEmail.split('@')[0] || 'Administrador Master',
+                  email: userEmail,
+                  role: 'admin',
+                  status: 'active',
+                  isMaster: true,
+                  createdAt: new Date().toISOString()
+                };
+                await setDoc(doc(db, 'users', firebaseUser.uid), masterUser);
+                await setDoc(doc(db, 'system', 'setup'), {
+                  masterRegistered: true,
+                  masterUid: firebaseUser.uid,
+                  masterEmail: userEmail,
+                  createdAt: new Date().toISOString()
+                });
+                try {
+                  await fetch('/api/auth/set-master', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ email: userEmail })
+                  });
+                } catch (e) {}
+                setCurrentUser(masterUser);
+              } else {
+                console.warn('Unauthorized user signed out:', firebaseUser.email);
+                await signOut(auth);
+                setCurrentUser(null);
+                showToast('error', 'Acesso não autorizado: Esta conta não foi cadastrada. Somente o Administrador Master pode criar novos usuários.');
+              }
+            }
           }
         } catch (err) {
           console.warn('Error fetching user profile:', err);
-          setCurrentUser({
-            uid: firebaseUser.uid,
-            name: firebaseUser.displayName || firebaseUser.email?.split('@')[0] || 'Administrador',
-            email: (firebaseUser.email || '').toLowerCase(),
-            role: 'admin',
-            status: 'active',
-            isMaster: true,
-            createdAt: new Date().toISOString()
-          });
+          setCurrentUser(null);
         }
       } else {
         setCurrentUser(null);
@@ -189,6 +234,8 @@ export default function App() {
         ...(selectedVendeu && selectedVendeu !== 'all' ? { vendeu: selectedVendeu } : {}),
         ...(selectedLoja && selectedLoja !== 'all' ? { loja: selectedLoja } : {}),
         ...(selectedVendedor && selectedVendedor !== 'all' ? { vendedor: selectedVendedor } : {}),
+        ...(onlyWithCpf ? { has_cpf: 'true' } : {}),
+        ...(searchCpfOnly ? { searchCpfOnly: 'true' } : {}),
         ...(searchQuery ? { search: searchQuery } : {})
       });
       const res = await fetch(`/api/leads?${params.toString()}`);
@@ -202,7 +249,7 @@ export default function App() {
     } catch (e: any) {
       console.warn('Leads temporariamente indisponíveis (reconectando...):', e?.message || e);
     }
-  }, [period, customStartDate, customEndDate, selectedSort, selectedChannel, selectedStatus, selectedVendeu, selectedLoja, selectedVendedor, searchQuery, currentPage]);
+  }, [period, customStartDate, customEndDate, selectedSort, selectedChannel, selectedStatus, selectedVendeu, selectedLoja, selectedVendedor, onlyWithCpf, searchCpfOnly, searchQuery, currentPage]);
 
   useEffect(() => {
     loadConfig();
@@ -673,7 +720,7 @@ export default function App() {
       />
 
       {/* Main Workspace with Dynamic Responsive Margins */}
-      <div className={`flex-1 ${isSidebarCollapsed ? 'lg:ml-[72px]' : 'lg:ml-64'} flex flex-col min-w-0 min-h-screen transition-all duration-300 ease-in-out`}>
+      <div className={`flex-1 ${isSidebarCollapsed ? 'lg:ml-[72px]' : 'lg:ml-68'} flex flex-col min-w-0 min-h-screen transition-all duration-300 ease-in-out`}>
         <Header
           currentTab={currentTab}
           period={period}
@@ -725,6 +772,16 @@ export default function App() {
               searchQuery={searchQuery}
               onSearchChange={q => {
                 setSearchQuery(q);
+                setCurrentPage(1);
+              }}
+              onlyWithCpf={onlyWithCpf}
+              onToggleOnlyWithCpf={() => {
+                setOnlyWithCpf(prev => !prev);
+                setCurrentPage(1);
+              }}
+              searchCpfOnly={searchCpfOnly}
+              onToggleSearchCpfOnly={() => {
+                setSearchCpfOnly(prev => !prev);
                 setCurrentPage(1);
               }}
               selectedChannel={selectedChannel}

@@ -155,6 +155,13 @@ export const UsersView: React.FC<UsersViewProps> = ({ currentUser, showToast }) 
   };
 
   const handleDeleteUser = async (userId: string) => {
+    const target = users.find(u => u.uid === userId);
+    if (target?.isMaster) {
+      showToast('error', 'O usuário Master é o proprietário do sistema e não pode ser excluído.');
+      setDeletingUserId(null);
+      return;
+    }
+
     if (userId === currentUser?.uid) {
       showToast('error', 'Você não pode excluir sua própria conta enquanto estiver logado.');
       setDeletingUserId(null);
@@ -337,8 +344,13 @@ export const UsersView: React.FC<UsersViewProps> = ({ currentUser, showToast }) 
                             {initials}
                           </div>
                           <div>
-                            <div className="font-bold text-[#002139] flex items-center gap-1.5">
+                            <div className="font-bold text-[#002139] flex items-center gap-1.5 flex-wrap">
                               <span>{u.name}</span>
+                              {u.isMaster && (
+                                <span className="text-[10px] font-extrabold px-1.5 py-0.5 rounded bg-amber-100 text-amber-900 border border-amber-300 flex items-center gap-1 shadow-2xs">
+                                  👑 Master
+                                </span>
+                              )}
                               {isCurrent && (
                                 <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-700 border border-emerald-200">
                                   Você
@@ -365,18 +377,19 @@ export const UsersView: React.FC<UsersViewProps> = ({ currentUser, showToast }) 
                       <td className="px-6 py-3.5 text-center">
                         <button
                           onClick={() => handleToggleStatus(u)}
+                          disabled={u.isMaster}
                           className={`inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-bold cursor-pointer transition-colors ${
                             u.status !== 'inactive' 
                               ? 'bg-emerald-50 text-emerald-800 hover:bg-emerald-100' 
                               : 'bg-slate-100 text-slate-500 hover:bg-slate-200'
-                          }`}
+                          } disabled:opacity-75 disabled:cursor-not-allowed`}
                         >
                           {u.status !== 'inactive' ? 'Ativo' : 'Inativo'}
                         </button>
                       </td>
 
                       <td className="px-6 py-3.5 text-center">
-                        {!isCurrent && (
+                        {!isCurrent && !u.isMaster && (
                           <button
                             onClick={() => setDeletingUserId(u.uid)}
                             title="Excluir usuário"

@@ -25,7 +25,7 @@ interface DatabaseSchema {
 const DEFAULT_CONFIG: ChatwootConfig = {
   chatwoot_url: 'https://app.chatwoot.com',
   account_id: '',
-  api_token: '',
+  api_token: process.env.CHATWOOT_API_TOKEN || '',
   connected: false,
   last_sync_at: null,
   last_sync_count: 0,
@@ -780,7 +780,10 @@ export function clearDatabase(): void {
   db.config.last_sync_count = 0;
   db.config.last_sync_at = null;
   db.config.last_sync_status = 'idle';
-  saveDb(db);
+  saveDb(db, false);
+  saveLeadsToFirestore({}).catch(err => {
+    console.warn('[Storage] Erro ao sincronizar limpeza de leads com Firestore:', err);
+  });
 }
 
 export function cleanMockData(): { removedCount: number; remainingCount: number } {
@@ -906,22 +909,24 @@ export async function initPersistentStorage(): Promise<void> {
           ...DEFAULT_CONFIG,
           ...db.config,
           ...remote.config,
-          connected: Boolean(remote.config.connected ?? db.config.connected)
+          api_token: db.config.api_token || '', // respect cleared token
+          connected: Boolean(db.config.api_token && (remote.config.connected ?? db.config.connected))
         };
       }
       if (remote.investments && Array.isArray(remote.investments) && remote.investments.length > 0) {
         db.investments = remote.investments;
       }
-      if (remote.leads && typeof remote.leads === 'object' && Object.keys(remote.leads).length > 0) {
+      // If local leads were explicitly wiped, sync the wiped state to Firestore
+      if (Object.keys(db.leads).length === 0) {
+        await saveLeadsToFirestore({});
+      } else if (remote.leads && typeof remote.leads === 'object' && Object.keys(remote.leads).length > 0) {
         db.leads = { ...db.leads, ...remote.leads };
       }
       saveDb(db, false);
-      console.log(`[Storage] Armazenamento persistente carregado com sucesso do Firestore: ${Object.keys(db.leads).length} leads, ${(db.investments || []).length} aportes.`);
+      console.log(`[Storage] Armazenamento persistente inicializado: ${Object.keys(db.leads).length} leads, ${(db.investments || []).length} aportes.`);
     } else {
-      if (db.config.api_token || Object.keys(db.leads).length > 0 || (db.investments || []).length > 0) {
-        await saveAllAppDataToFirestore(db);
-        console.log('[Storage] Dados locais sincronizados com o Firestore pela primeira vez.');
-      }
+      await saveAllAppDataToFirestore(db);
+      console.log('[Storage] Dados locais sincronizados com o Firestore.');
     }
   } catch (err: any) {
     console.warn('[Storage] Falha ao sincronizar dados persistentes do Firestore:', err.message);

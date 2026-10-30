@@ -5,7 +5,8 @@ import {
   signInWithPopup,
   GoogleAuthProvider,
   sendPasswordResetEmail,
-  updateProfile 
+  updateProfile,
+  signOut
 } from 'firebase/auth';
 import { doc, setDoc, getDoc, collection, getDocs, limit, query } from 'firebase/firestore';
 import { auth, db } from '../lib/firebase.ts';
@@ -146,65 +147,88 @@ export const LoginView: React.FC<LoginViewProps> = ({ onSuccess }) => {
         throw new Error('Falha ao autenticar com o Google.');
       }
 
-      // Check or create user profile
-      let userProfile: AppUser;
-      try {
-        const profileDoc = await getDoc(doc(db, 'users', cred.user.uid));
-        if (profileDoc.exists()) {
-          userProfile = profileDoc.data() as AppUser;
-        } else {
-          // Check if system already has a master user
-          const q = query(collection(db, 'users'), limit(1));
-          const usersSnap = await getDocs(q);
-          const isFirstUser = usersSnap.empty;
+      const userEmail = (cred.user.email || '').toLowerCase();
+      const userUid = cred.user.uid;
 
-          userProfile = {
-            uid: cred.user.uid,
-            name: cred.user.displayName || cred.user.email?.split('@')[0] || 'Administrador',
-            email: (cred.user.email || '').toLowerCase(),
-            role: 'admin',
-            status: 'active',
-            isMaster: isFirstUser || !hasMasterUser,
-            createdAt: new Date().toISOString()
-          };
-
-          await setDoc(doc(db, 'users', cred.user.uid), userProfile);
-
-          if (isFirstUser || !hasMasterUser) {
-            try {
-              await setDoc(doc(db, 'system', 'setup'), {
-                masterRegistered: true,
-                masterUid: cred.user.uid,
-                masterEmail: userProfile.email,
-                createdAt: new Date().toISOString()
-              });
-              await fetch('/api/auth/set-master', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ email: userProfile.email })
-              });
-            } catch (e) {
-              console.warn('Could not record master status:', e);
-            }
-          }
+      // 1. Check if user profile already exists by UID in /users
+      const profileDoc = await getDoc(doc(db, 'users', userUid));
+      
+      if (profileDoc.exists()) {
+        const profile = profileDoc.data() as AppUser;
+        if (profile.status === 'inactive') {
+          await signOut(auth);
+          setErrorMsg('Sua conta de usuário está desativada no sistema. Contate o Administrador Master.');
+          return;
         }
-      } catch (e) {
-        console.warn('Profile sync fallback:', e);
-        userProfile = {
-          uid: cred.user.uid,
-          name: cred.user.displayName || cred.user.email?.split('@')[0] || 'Administrador',
-          email: (cred.user.email || '').toLowerCase(),
+        onSuccess(profile);
+        return;
+      }
+
+      // 2. Also check if the Master user created this user by email
+      const qUsers = query(collection(db, 'users'), limit(50));
+      const usersSnap = await getDocs(qUsers);
+      const matchedExisting = usersSnap.docs
+        .map(d => d.data() as AppUser)
+        .find(u => u.email && u.email.toLowerCase() === userEmail);
+
+      if (matchedExisting) {
+        const activatedUser: AppUser = {
+          ...matchedExisting,
+          uid: userUid,
+          name: cred.user.displayName || matchedExisting.name,
+          status: matchedExisting.status || 'active'
+        };
+        if (activatedUser.status === 'inactive') {
+          await signOut(auth);
+          setErrorMsg('Sua conta de usuário está desativada no sistema. Contate o Administrador Master.');
+          return;
+        }
+        await setDoc(doc(db, 'users', userUid), activatedUser);
+        onSuccess(activatedUser);
+        return;
+      }
+
+      // 3. If user doesn't exist, check if there are ANY users in the system
+      const isSystemEmpty = usersSnap.empty;
+
+      if (isSystemEmpty || !hasMasterUser) {
+        // First ever user becomes the MASTER user
+        const masterProfile: AppUser = {
+          uid: userUid,
+          name: cred.user.displayName || userEmail.split('@')[0] || 'Administrador Master',
+          email: userEmail,
           role: 'admin',
           status: 'active',
           isMaster: true,
           createdAt: new Date().toISOString()
         };
-      }
 
-      onSuccess(userProfile);
+        await setDoc(doc(db, 'users', userUid), masterProfile);
+        try {
+          await setDoc(doc(db, 'system', 'setup'), {
+            masterRegistered: true,
+            masterUid: userUid,
+            masterEmail: userEmail,
+            createdAt: new Date().toISOString()
+          });
+          await fetch('/api/auth/set-master', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ email: userEmail })
+          });
+        } catch (e) {
+          console.warn('Could not record master setup:', e);
+        }
+
+        setHasMasterUser(true);
+        onSuccess(masterProfile);
+      } else {
+        // Master already exists and this user was not pre-created by Master!
+        await signOut(auth);
+        setErrorMsg(`Acesso não autorizado: O e-mail "${userEmail}" não foi cadastrado no sistema. Por medida de segurança, novos usuários devem ser criados previamente pelo Administrador Master no menu "Usuários".`);
+      }
     } catch (err: any) {
       if (err.code === 'auth/popup-closed-by-user') {
-        // Ignored, user intentionally dismissed popup
         return;
       }
       console.warn('Google sign-in warning:', err);
@@ -245,6 +269,12 @@ export const LoginView: React.FC<LoginViewProps> = ({ onSuccess }) => {
 
     try {
       if (authMode === 'register') {
+        if (hasMasterUser) {
+          setErrorMsg('O Administrador Master já foi cadastrado. Novos operadores devem ser criados internamente pelo Master em "Gestão de Usuários".');
+          setLoading(false);
+          return;
+        }
+
         if (!name.trim()) {
           setErrorMsg('Por favor, informe seu nome completo.');
           setLoading(false);
@@ -254,65 +284,96 @@ export const LoginView: React.FC<LoginViewProps> = ({ onSuccess }) => {
         const cred = await createUserWithEmailAndPassword(auth, email.trim(), password);
         await updateProfile(cred.user, { displayName: name.trim() });
 
-        const isFirst = !hasMasterUser;
-        const newUser: AppUser = {
+        const userEmail = email.trim().toLowerCase();
+        const masterUser: AppUser = {
           uid: cred.user.uid,
           name: name.trim(),
-          email: email.trim().toLowerCase(),
+          email: userEmail,
           role: 'admin',
           status: 'active',
-          isMaster: isFirst,
+          isMaster: true,
           createdAt: new Date().toISOString()
         };
 
         // Save profile in Firestore /users
         try {
-          await setDoc(doc(db, 'users', cred.user.uid), newUser);
+          await setDoc(doc(db, 'users', cred.user.uid), masterUser);
+          await setDoc(doc(db, 'system', 'setup'), {
+            masterRegistered: true,
+            masterUid: cred.user.uid,
+            masterEmail: userEmail,
+            createdAt: new Date().toISOString()
+          });
+          await fetch('/api/auth/set-master', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ email: userEmail })
+          });
         } catch (e) {
-          console.warn('Could not write user profile doc:', e);
-        }
-        
-        // Save setup marker in Firestore /system/setup
-        if (isFirst) {
-          try {
-            await setDoc(doc(db, 'system', 'setup'), {
-              masterRegistered: true,
-              masterUid: cred.user.uid,
-              masterEmail: newUser.email,
-              createdAt: new Date().toISOString()
-            });
-            await fetch('/api/auth/set-master', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ email: newUser.email })
-            });
-          } catch (e) {
-            console.warn('Could not write system/setup doc:', e);
-          }
-          setHasMasterUser(true);
+          console.warn('Could not write master setup doc:', e);
         }
 
-        onSuccess(newUser);
+        setHasMasterUser(true);
+        onSuccess(masterUser);
       } else {
         // Login mode
         const cred = await signInWithEmailAndPassword(auth, email.trim(), password);
-        
-        let userProfile: AppUser = {
-          uid: cred.user.uid,
-          name: cred.user.displayName || email.split('@')[0],
-          email: cred.user.email || email,
-          role: 'admin',
-          status: 'active',
-          createdAt: new Date().toISOString()
-        };
+        const userUid = cred.user.uid;
+        const userEmail = (cred.user.email || email.trim()).toLowerCase();
 
-        try {
-          const profileDoc = await getDoc(doc(db, 'users', cred.user.uid));
-          if (profileDoc.exists()) {
-            userProfile = profileDoc.data() as AppUser;
+        // 1. Check profile in Firestore /users
+        const profileDoc = await getDoc(doc(db, 'users', userUid));
+        let userProfile: AppUser | null = null;
+
+        if (profileDoc.exists()) {
+          userProfile = profileDoc.data() as AppUser;
+        } else {
+          // Check by email in /users (e.g. user was provisioned by master with email)
+          const qUsers = query(collection(db, 'users'), limit(50));
+          const usersSnap = await getDocs(qUsers);
+          const matchedProfile = usersSnap.docs
+            .map(d => d.data() as AppUser)
+            .find(u => u.email && u.email.toLowerCase() === userEmail);
+
+          if (matchedProfile) {
+            userProfile = {
+              ...matchedProfile,
+              uid: userUid,
+              status: matchedProfile.status || 'active'
+            };
+            await setDoc(doc(db, 'users', userUid), userProfile);
           }
-        } catch (e) {
-          console.warn('Profile read fallback:', e);
+        }
+
+        if (!userProfile) {
+          // Check if system has no users at all
+          const qUsers = query(collection(db, 'users'), limit(1));
+          const usersSnap = await getDocs(qUsers);
+          if (usersSnap.empty || !hasMasterUser) {
+            userProfile = {
+              uid: userUid,
+              name: cred.user.displayName || email.split('@')[0] || 'Administrador Master',
+              email: userEmail,
+              role: 'admin',
+              status: 'active',
+              isMaster: true,
+              createdAt: new Date().toISOString()
+            };
+            await setDoc(doc(db, 'users', userUid), userProfile);
+            setHasMasterUser(true);
+          } else {
+            await signOut(auth);
+            setErrorMsg(`Acesso não autorizado: O usuário "${userEmail}" não possui cadastro no sistema. Novos usuários devem ser criados pelo Administrador Master no menu "Usuários".`);
+            setLoading(false);
+            return;
+          }
+        }
+
+        if (userProfile.status === 'inactive') {
+          await signOut(auth);
+          setErrorMsg('Sua conta de usuário está inativa. Entre em contato com o Administrador Master.');
+          setLoading(false);
+          return;
         }
 
         onSuccess(userProfile);
@@ -430,38 +491,47 @@ export const LoginView: React.FC<LoginViewProps> = ({ onSuccess }) => {
 
           {/* Mode Switcher Tabs (Entrar / Cadastrar) */}
           {authMode !== 'forgot_password' && (
-            <div className="flex bg-slate-100 p-1 rounded-xl">
-              <button
-                type="button"
-                onClick={() => {
-                  setAuthMode('login');
-                  setErrorMsg('');
-                  setSuccessMsg('');
-                }}
-                className={`flex-1 py-1.5 text-xs font-bold rounded-lg transition-all cursor-pointer ${
-                  authMode === 'login'
-                    ? 'bg-white text-slate-900 shadow-xs'
-                    : 'text-slate-500 hover:text-slate-900'
-                }`}
-              >
-                Entrar
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setAuthMode('register');
-                  setErrorMsg('');
-                  setSuccessMsg('');
-                }}
-                className={`flex-1 py-1.5 text-xs font-bold rounded-lg transition-all cursor-pointer ${
-                  authMode === 'register'
-                    ? 'bg-white text-slate-900 shadow-xs'
-                    : 'text-slate-500 hover:text-slate-900'
-                }`}
-              >
-                {!hasMasterUser ? 'Cadastrar Master' : 'Criar Conta'}
-              </button>
-            </div>
+            !hasMasterUser ? (
+              <div className="flex bg-slate-100 p-1 rounded-xl">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setAuthMode('login');
+                    setErrorMsg('');
+                    setSuccessMsg('');
+                  }}
+                  className={`flex-1 py-1.5 text-xs font-bold rounded-lg transition-all cursor-pointer ${
+                    authMode === 'login'
+                      ? 'bg-white text-slate-900 shadow-xs'
+                      : 'text-slate-500 hover:text-slate-900'
+                  }`}
+                >
+                  Entrar
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setAuthMode('register');
+                    setErrorMsg('');
+                    setSuccessMsg('');
+                  }}
+                  className={`flex-1 py-1.5 text-xs font-bold rounded-lg transition-all cursor-pointer ${
+                    authMode === 'register'
+                      ? 'bg-white text-slate-900 shadow-xs'
+                      : 'text-slate-500 hover:text-slate-900'
+                  }`}
+                >
+                  Cadastrar Master
+                </button>
+              </div>
+            ) : (
+              <div className="flex items-center gap-2 px-3.5 py-2.5 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-600">
+                <ShieldCheck className="w-4 h-4 text-[#1A94C5] shrink-0" />
+                <span className="leading-tight">
+                  <strong>Acesso Restrito:</strong> Novos usuários só podem ser cadastrados pelo Administrador Master.
+                </span>
+              </div>
+            )
           )}
 
           {/* Feedback messages */}
@@ -470,22 +540,14 @@ export const LoginView: React.FC<LoginViewProps> = ({ onSuccess }) => {
               <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
               <div>
                 <span>{errorMsg}</span>
-                {authMode === 'login' && errorMsg.includes('E-mail ou senha incorretos') && (
+                {authMode === 'login' && !hasMasterUser && (
                   <div className="mt-2 flex items-center gap-2">
                     <button
                       type="button"
                       onClick={() => setAuthMode('register')}
                       className="text-xs font-bold text-[#1A94C5] underline hover:text-[#002139] cursor-pointer"
                     >
-                      Criar nova conta agora
-                    </button>
-                    <span className="text-slate-300">•</span>
-                    <button
-                      type="button"
-                      onClick={handleGoogleSignIn}
-                      className="text-xs font-bold text-slate-700 hover:text-slate-900 cursor-pointer"
-                    >
-                      Tentar com Google
+                      Cadastrar Administrador Master agora
                     </button>
                   </div>
                 )}
